@@ -54,7 +54,7 @@ contract TokenTests is Test {
         usdt.approve(user2, 500 ether);
 
         vm.prank(user2);
-        usdy.burnFrom(user1, 300 ether);
+        usdt.burnFrom(user1, 300 ether);
 
         assertEq(usdt.balanceOf(user1), 700 ether);
     }
@@ -186,10 +186,11 @@ contract TokenTests is Test {
 
         uint256 supplyBefore = usdy.totalSupply();
         vm.prank(owner);
-        usdy.accrueMonthlyYield();
+        usdy.accrueYield();
 
         uint256 supplyAfter = usdy.totalSupply();
-        uint256 expectedYield = (supplyBefore * 416) / 10000;
+        // 5% APY for 30 days: 10000 * 500 * 30 / (10000 * 365) = 4.10958904109589
+        uint256 expectedYield = (supplyBefore * 500 * 30) / (10000 * 365);
 
         assertEq(supplyAfter, supplyBefore + expectedYield);
     }
@@ -202,26 +203,20 @@ contract TokenTests is Test {
         // Fast forward 30 days
         vm.warp(block.timestamp + 30 days);
 
-        uint256 yield = usdy.getCurrentYield();
-        uint256 expectedYield = (10000 ether * 416) / 10000;
+        uint256 yield = usdy.getAccruedYield(user1);
+        // 5% APY for 30 days: should be approximately 410.96 ether
+        // Using a calculation that works with Solidity's type system
+        uint256 principal = 10000 ether;
+        uint256 apy = 500; // 5%
+        uint256 numDays = 30;
+        uint256 expectedYield = (principal * apy * numDays) / (10000 * 365);
 
         assertEq(yield, expectedYield);
     }
 
-    function testMonthlyYieldRate() public {
-        uint256 rate = usdy.getMonthlyYieldRate();
-        assertEq(rate, 416); // 4.16%
-    }
-
-    function testCannotAccrueYieldBefore30Days() public {
-        vm.startPrank(owner);
-        usdy.mint(user1, 10000 ether);
-        vm.stopPrank();
-
-        // Try to accrue before 30 days
-        vm.expectRevert("Can only accrue yield monthly");
-        vm.prank(owner);
-        usdy.accrueMonthlyYield();
+    function testAPY() public {
+        uint256 rate = usdy.getAPY();
+        assertEq(rate, 500); // 5%
     }
 
     function testGetCurrentYieldBefore30Days() public {
@@ -229,8 +224,16 @@ contract TokenTests is Test {
         usdy.mint(user1, 10000 ether);
         vm.stopPrank();
 
-        // Check yield before 30 days
-        uint256 yield = usdy.getCurrentYield();
-        assertEq(yield, 0);
+        // Fast forward 15 days (less than 30)
+        vm.warp(block.timestamp + 15 days);
+
+        // Check yield - should have some yield even before 30 days
+        uint256 yield = usdy.getAccruedYield(user1);
+        // 5% APY for 15 days: should be approximately 205.48 ether
+        uint256 principal = 10000 ether;
+        uint256 apy = 500; // 5%
+        uint256 numDays = 15;
+        uint256 expectedYield = (principal * apy * numDays) / (10000 * 365);
+        assertEq(yield, expectedYield);
     }
 }

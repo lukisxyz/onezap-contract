@@ -16,7 +16,9 @@ contract RegistryTests is Test {
     address public creator2 = address(3);
     address public user1 = address(4);
 
-    function setUp() public {}
+    function setUp() public {
+        registry = new ContentCreatorRegistry();
+    }
 
     function testRegisterCreator() public {
         vm.prank(creator1);

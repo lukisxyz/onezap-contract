@@ -126,21 +126,17 @@ contract Subscription is ReentrancyGuard, Ownable {
             .getCreator(creator);
         require(exists, "Creator not registered");
 
-        // Transfer USDT from subscriber
+        // Transfer USDT from subscriber to contract (locked)
         USDT_TOKEN.safeTransferFrom(msg.sender, address(this), SUBSCRIPTION_AMOUNT);
 
-        // Swap USDT to USDY (1:1 ratio for simplicity)
-        USDT_TOKEN.safeTransfer(address(USDY_TOKEN), SUBSCRIPTION_AMOUNT);
-        // Note: In production, this would involve actual DEX swap
-
-        // Create subscription
+        // Create subscription (USDY is tracked internally, not transferred to subscriber)
         subscriptionId = nextSubscriptionId++;
         subscriptions[subscriptionId] = SubscriptionData({
             id: subscriptionId,
             subscriber: msg.sender,
             creator: creator,
             amount: SUBSCRIPTION_AMOUNT,
-            usdyAmount: SUBSCRIPTION_AMOUNT,
+            usdyAmount: SUBSCRIPTION_AMOUNT, // 1:1 with USDT initially
             startTime: block.timestamp,
             lastYieldAccrual: block.timestamp,
             status: SubscriptionStatus.ACTIVE,
@@ -239,24 +235,51 @@ contract Subscription is ReentrancyGuard, Ownable {
     function _processWithdrawal(uint256 subscriptionId) internal {
         SubscriptionData storage sub = subscriptions[subscriptionId];
 
-        // Calculate return amount
-        uint256 returnAmount = sub.amount;
+        // Calculate current USDY value with yield
+        uint256 currentValue = calculateCurrentValue(subscriptionId);
 
-        // For complete epoch, add yield
+        // Calculate return amount (subtract penalty if any)
+        uint256 returnAmount = currentValue;
+
+        // For complete epoch, return full amount with yield
         if (sub.withdrawalType == WithdrawalType.COMPLETE_EPOCH) {
-            // In production, calculate actual yield based on time
-            // For now, assume 0.416% monthly
-            uint256 yieldAmount = (sub.usdyAmount * 416) / 10000;
-            returnAmount += yieldAmount;
+            // Full amount with yield - already calculated in currentValue
+        } else if (sub.withdrawalType == WithdrawalType.EARLY) {
+            // Return 99.5 USDT (0.5 USDT penalty)
+            returnAmount = sub.amount - EARLY_WITHDRAWAL_PENALTY;
+        } else if (sub.withdrawalType == WithdrawalType.IMMEDIATE) {
+            // Return 99 USDT (1 USDT penalty)
+            returnAmount = sub.amount - IMMEDIATE_WITHDRAWAL_PENALTY;
         }
 
-        // Swap USDY back to USDT
-        // Note: In production, this would involve actual DEX swap
-        USDY_TOKEN.safeTransfer(msg.sender, sub.usdyAmount);
+        // Transfer USDT back to subscriber from contract balance
+        USDT_TOKEN.safeTransfer(msg.sender, returnAmount);
 
         sub.status = SubscriptionStatus.WITHDRAWAL_PROCESSED;
 
         emit WithdrawalProcessed(subscriptionId, msg.sender, returnAmount);
+    }
+
+    /**
+     * @dev Calculates the current value of a subscription including yield
+     * @param subscriptionId Subscription ID
+     * @return currentValue Current value in USDT
+     */
+    function calculateCurrentValue(uint256 subscriptionId) internal view returns (uint256 currentValue) {
+        SubscriptionData storage sub = subscriptions[subscriptionId];
+        uint256 timeElapsed = block.timestamp - sub.lastYieldAccrual;
+
+        if (timeElapsed == 0) {
+            return sub.usdyAmount;
+        }
+
+        // Yield calculation: principal * rate * time
+        // currentValue = (principal * APY * time) / (10000 * seconds_per_year) + principal
+        uint256 apyBps = 500; // 5% APY
+        uint256 secondsPerYear = 365 days;
+
+        uint256 yieldAmount = (sub.usdyAmount * apyBps * timeElapsed) / (10000 * secondsPerYear);
+        currentValue = sub.usdyAmount + yieldAmount;
     }
 
     /**

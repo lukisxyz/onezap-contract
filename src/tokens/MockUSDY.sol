@@ -6,15 +6,18 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
  * @title MockUSDY
- * @notice Mock USDY token with yield mechanics
- * @dev Simulates USDY with ~5% APY, calculated as ~0.416% monthly
+ * @notice Mock USDY token with 5% APY yield mechanics
+ * @dev Simulates real USDY with fixed 5% APY that accrues continuously
  */
 contract MockUSDY is ERC20, Ownable {
-    // Monthly yield rate: ~0.416% (5% APY)
-    uint256 public constant MONTHLY_YIELD_BPS = 416; // basis points (4.16%)
+    // Fixed APY: 5% per year
+    uint256 public constant APY_BPS = 500; // 5% = 500 basis points
+
+    // Seconds in a year
+    uint256 public constant SECONDS_PER_YEAR = 365 days;
 
     // Last yield accrual timestamp
-    uint256 public lastAccrualTimestamp;
+    uint256 public lastYieldTimestamp;
 
     // Total yield accrued since deployment
     uint256 public totalYieldAccrued;
@@ -23,7 +26,7 @@ contract MockUSDY is ERC20, Ownable {
      * @dev Constructor that initializes the ERC20 token
      */
     constructor() ERC20("Mock USDY", "USDY") Ownable(address(1)) {
-        lastAccrualTimestamp = block.timestamp;
+        lastYieldTimestamp = block.timestamp;
     }
 
     /**
@@ -53,53 +56,83 @@ contract MockUSDY is ERC20, Ownable {
     }
 
     /**
-     * @dev Accrues monthly yield at ~0.416% (5% APY)
-     * @notice This is a simplified yield calculation for testing
+     * @dev Accrues yield based on time elapsed since last accrual
+     * @notice Accrues yield continuously at 5% APY
      */
-    function accrueMonthlyYield() external onlyOwner {
-        require(
-            block.timestamp >= lastAccrualTimestamp + 30 days,
-            "Can only accrue yield monthly"
-        );
+    function accrueYield() external onlyOwner {
+        uint256 timeElapsed = block.timestamp - lastYieldTimestamp;
+        if (timeElapsed == 0) return;
 
         uint256 currentSupply = totalSupply();
         if (currentSupply == 0) {
-            lastAccrualTimestamp = block.timestamp;
+            lastYieldTimestamp = block.timestamp;
             return;
         }
 
-        // Calculate yield: (currentSupply * monthlyYieldBps) / 10000
-        uint256 yieldAmount = (currentSupply * MONTHLY_YIELD_BPS) / 10000;
+        // Calculate yield: principal * rate * time
+        // yield = (currentSupply * APY_BPS * timeElapsed) / (10000 * SECONDS_PER_YEAR)
+        uint256 yieldAmount = (currentSupply * APY_BPS * timeElapsed) / (10000 * SECONDS_PER_YEAR);
 
-        // Mint yield tokens to owner (simulating yield distribution)
-        _mint(owner(), yieldAmount);
-
-        totalYieldAccrued += yieldAmount;
-        lastAccrualTimestamp = block.timestamp;
-    }
-
-    /**
-     * @dev Returns the current accrued yield
-     * @return yieldAmount Current yield amount
-     */
-    function getCurrentYield() external view returns (uint256 yieldAmount) {
-        uint256 timeSinceLastAccrual = block.timestamp - lastAccrualTimestamp;
-
-        // Simplified: calculate proportional yield based on time elapsed
-        // In reality, this would be more complex
-        if (timeSinceLastAccrual >= 30 days) {
-            uint256 currentSupply = totalSupply();
-            yieldAmount = (currentSupply * MONTHLY_YIELD_BPS) / 10000;
-        } else {
-            yieldAmount = 0;
+        if (yieldAmount > 0) {
+            // Mint yield tokens to owner (simulating yield distribution)
+            _mint(owner(), yieldAmount);
+            totalYieldAccrued += yieldAmount;
         }
+
+        lastYieldTimestamp = block.timestamp;
     }
 
     /**
-     * @dev Returns the monthly yield rate in basis points
-     * @return rate Monthly yield rate (416 = 4.16%)
+     * @dev Returns the current balance including accrued yield
+     * @param account Address to query
+     * @return Current balance with yield
      */
-    function getMonthlyYieldRate() external pure returns (uint256 rate) {
-        return MONTHLY_YIELD_BPS;
+    function balanceOf(address account) public view override returns (uint256) {
+        uint256 baseBalance = super.balanceOf(account);
+        uint256 timeElapsed = block.timestamp - lastYieldTimestamp;
+
+        if (timeElapsed == 0 || baseBalance == 0) {
+            return baseBalance;
+        }
+
+        // Calculate accrued yield: principal * rate * time
+        uint256 accruedYield = (baseBalance * APY_BPS * timeElapsed) / (10000 * SECONDS_PER_YEAR);
+
+        return baseBalance + accruedYield;
+    }
+
+    /**
+     * @dev Returns the current accrued yield for an account
+     * @param account Address to query
+     * @return Accrued yield amount
+     */
+    function getAccruedYield(address account) external view returns (uint256) {
+        uint256 baseBalance = super.balanceOf(account);
+        uint256 timeElapsed = block.timestamp - lastYieldTimestamp;
+
+        if (timeElapsed == 0 || baseBalance == 0) {
+            return 0;
+        }
+
+        // Calculate accrued yield: principal * rate * time
+        uint256 accruedYield = (baseBalance * APY_BPS * timeElapsed) / (10000 * SECONDS_PER_YEAR);
+
+        return accruedYield;
+    }
+
+    /**
+     * @dev Returns the APY in basis points
+     * @return rate APY rate (500 = 5%)
+     */
+    function getAPY() external pure returns (uint256 rate) {
+        return APY_BPS;
+    }
+
+    /**
+     * @dev Returns the last yield timestamp
+     * @return timestamp Last yield accrual timestamp
+     */
+    function getLastYieldTimestamp() external view returns (uint256 timestamp) {
+        return lastYieldTimestamp;
     }
 }

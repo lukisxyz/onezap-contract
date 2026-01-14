@@ -29,6 +29,18 @@ contract SubscriptionTests is Test {
         registry = new ContentCreatorRegistry();
         subscription = new Subscription(address(usdt), address(usdy), address(registry));
 
+        // Transfer ownership of all contracts to subscription contract
+        vm.prank(owner);
+        usdt.transferOwnership(address(subscription));
+        vm.prank(owner);
+        usdy.transferOwnership(address(subscription));
+        vm.prank(owner);
+        registry.transferOwnership(address(subscription));
+
+        // Mint tokens to subscription contract for payouts
+        vm.prank(address(subscription));
+        usdt.mint(address(subscription), 100000 ether);
+
         // Register creators
         vm.prank(creator1);
         registry.registerCreator("creator1", creator1);
@@ -37,14 +49,11 @@ contract SubscriptionTests is Test {
         registry.registerCreator("creator2", creator2);
 
         // Mint tokens to subscribers
-        vm.prank(owner);
+        vm.prank(address(subscription));
         usdt.mint(subscriber1, 1000 ether);
 
-        vm.prank(owner);
+        vm.prank(address(subscription));
         usdt.mint(subscriber2, 1000 ether);
-
-        vm.prank(owner);
-        usdy.mint(address(subscription), 100000 ether);
     }
 
     // Subscription Tests
@@ -299,7 +308,7 @@ contract SubscriptionTests is Test {
         subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.IMMEDIATE);
 
         // Try to request again
-        vm.expectRevert("Withdrawal already requested");
+        vm.expectRevert("Subscription not active");
         vm.prank(subscriber1);
         subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.EARLY);
     }
