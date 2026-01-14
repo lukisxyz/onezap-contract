@@ -26,12 +26,10 @@ contract Subscription is ReentrancyGuard, Ownable {
 
     // Penalty amounts
     uint256 public constant IMMEDIATE_WITHDRAWAL_PENALTY = 1 ether; // 1 USDT
-    uint256 public constant EARLY_WITHDRAWAL_PENALTY = 0.5 ether; // 0.5 USDT
 
     // Withdrawal types
     enum WithdrawalType {
         IMMEDIATE, // Pay 1 USDT penalty, get ~99 USDT back immediately
-        EARLY, // Pay 0.5 USDT penalty, get ~99.5 USDT back after 30 days
         COMPLETE_EPOCH // No penalty, get 100 USDT + yield back after 1 month
     }
 
@@ -170,8 +168,6 @@ contract Subscription is ReentrancyGuard, Ownable {
         uint256 penalty = 0;
         if (withdrawalType == WithdrawalType.IMMEDIATE) {
             penalty = IMMEDIATE_WITHDRAWAL_PENALTY;
-        } else if (withdrawalType == WithdrawalType.EARLY) {
-            penalty = EARLY_WITHDRAWAL_PENALTY;
         }
 
         sub.withdrawalType = withdrawalType;
@@ -192,23 +188,6 @@ contract Subscription is ReentrancyGuard, Ownable {
         if (withdrawalType == WithdrawalType.IMMEDIATE) {
             _processWithdrawal(subscriptionId);
         }
-    }
-
-    /**
-     * @dev Processes early withdrawal after 30-day delay
-     * @param subscriptionId Subscription ID
-     */
-    function processEarlyWithdrawal(uint256 subscriptionId) external nonReentrant {
-        SubscriptionData storage sub = subscriptions[subscriptionId];
-        require(sub.subscriber == msg.sender, "Not subscription owner");
-        require(sub.status == SubscriptionStatus.WITHDRAWAL_REQUESTED, "Invalid status");
-        require(sub.withdrawalType == WithdrawalType.EARLY, "Not early withdrawal");
-        require(
-            block.timestamp >= sub.withdrawalRequestTime + 30 days,
-            "30-day delay not met"
-        );
-
-        _processWithdrawal(subscriptionId);
     }
 
     /**
@@ -244,9 +223,6 @@ contract Subscription is ReentrancyGuard, Ownable {
         // For complete epoch, return full amount with yield
         if (sub.withdrawalType == WithdrawalType.COMPLETE_EPOCH) {
             // Full amount with yield - already calculated in currentValue
-        } else if (sub.withdrawalType == WithdrawalType.EARLY) {
-            // Return 99.5 USDT (0.5 USDT penalty)
-            returnAmount = sub.amount - EARLY_WITHDRAWAL_PENALTY;
         } else if (sub.withdrawalType == WithdrawalType.IMMEDIATE) {
             // Return 99 USDT (1 USDT penalty)
             returnAmount = sub.amount - IMMEDIATE_WITHDRAWAL_PENALTY;

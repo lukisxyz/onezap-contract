@@ -161,27 +161,6 @@ contract SubscriptionTests is Test {
         assertEq(totalEarnings, 1 ether); // 1 USDT penalty
     }
 
-    function testRequestEarlyWithdrawal() public {
-        // Subscribe
-        vm.startPrank(subscriber1);
-        usdt.approve(address(subscription), 100 ether);
-        uint256 subscriptionId = subscription.subscribe(creator1);
-        vm.stopPrank();
-
-        // Request early withdrawal
-        vm.prank(subscriber1);
-        subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.EARLY);
-
-        // Check subscription status
-        Subscription.SubscriptionData memory sub = subscription.getSubscription(subscriptionId);
-        assertEq(uint256(sub.status), uint256(Subscription.SubscriptionStatus.WITHDRAWAL_REQUESTED));
-        assertEq(uint256(sub.withdrawalType), uint256(Subscription.WithdrawalType.EARLY));
-
-        // Check penalty distribution
-        (, , uint256 totalEarnings, ) = registry.getCreator(creator1);
-        assertEq(totalEarnings, 0.5 ether); // 0.5 USDT penalty
-    }
-
     function testRequestCompleteEpochWithdrawal() public {
         // Subscribe
         vm.startPrank(subscriber1);
@@ -201,46 +180,6 @@ contract SubscriptionTests is Test {
         // No penalty for complete epoch
         (, , uint256 totalEarnings, ) = registry.getCreator(creator1);
         assertEq(totalEarnings, 0);
-    }
-
-    function testProcessEarlyWithdrawalAfter30Days() public {
-        // Subscribe
-        vm.startPrank(subscriber1);
-        usdt.approve(address(subscription), 100 ether);
-        uint256 subscriptionId = subscription.subscribe(creator1);
-        vm.stopPrank();
-
-        // Request early withdrawal
-        vm.prank(subscriber1);
-        subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.EARLY);
-
-        // Fast forward 30 days
-        vm.warp(block.timestamp + 30 days);
-
-        // Process withdrawal
-        vm.prank(subscriber1);
-        subscription.processEarlyWithdrawal(subscriptionId);
-
-        // Check subscription status
-        Subscription.SubscriptionData memory sub = subscription.getSubscription(subscriptionId);
-        assertEq(uint256(sub.status), uint256(Subscription.SubscriptionStatus.WITHDRAWAL_PROCESSED));
-    }
-
-    function testProcessEarlyWithdrawalBefore30DaysReverts() public {
-        // Subscribe
-        vm.startPrank(subscriber1);
-        usdt.approve(address(subscription), 100 ether);
-        uint256 subscriptionId = subscription.subscribe(creator1);
-        vm.stopPrank();
-
-        // Request early withdrawal
-        vm.prank(subscriber1);
-        subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.EARLY);
-
-        // Try to process before 30 days
-        vm.expectRevert("30-day delay not met");
-        vm.prank(subscriber1);
-        subscription.processEarlyWithdrawal(subscriptionId);
     }
 
     function testProcessCompleteEpochWithdrawalAfter30Days() public {
@@ -310,7 +249,7 @@ contract SubscriptionTests is Test {
         // Try to request again
         vm.expectRevert("Subscription not active");
         vm.prank(subscriber1);
-        subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.EARLY);
+        subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.COMPLETE_EPOCH);
     }
 
     function testCannotRequestWithdrawalOnNonExistentSubscription() public {
@@ -329,9 +268,5 @@ contract SubscriptionTests is Test {
 
     function testImmediateWithdrawalPenalty() public {
         assertEq(subscription.IMMEDIATE_WITHDRAWAL_PENALTY(), 1 ether);
-    }
-
-    function testEarlyWithdrawalPenalty() public {
-        assertEq(subscription.EARLY_WITHDRAWAL_PENALTY(), 0.5 ether);
     }
 }
