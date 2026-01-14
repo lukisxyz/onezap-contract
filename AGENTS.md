@@ -38,3 +38,25 @@ bd sync               # Sync with git
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 
+## File Organization Rules
+
+**MANDATORY STRUCTURE:**
+
+1. **Shell Scripts** - ALL `.sh` files MUST be in `simulation/` directory
+   - No shell scripts in project root
+   - All automation scripts go to `simulation/`
+
+2. **Documentation** - ALL `.md` files (except `AGENTS.md`) MUST be in `docs/` directory
+   - Root level markdown is prohibited
+   - README.md stays in root
+   - All other documentation goes to `docs/`
+
+3. **Python Scripts** - ALL `.py` files in `simulation/` directory
+   - Python automation belongs in `simulation/`
+
+**FOLLOW THESE RULES:**
+- Before creating files, check if they belong in `simulation/` or `docs/`
+- If creating shell scripts, always put them in `simulation/`
+- If creating documentation, always put it in `docs/`
+- If creating Python automation, put it in `simulation/`
+
