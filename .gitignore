@@ -8,7 +8,8 @@ out/
 /broadcast/**/dry-run/
 
 # Docs
-docs/
+# docs/ is now tracked - do not ignore
+# docs/*.md
 
 # Dotenv file
 .env
