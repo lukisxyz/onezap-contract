@@ -110,7 +110,7 @@ contract SubscriptionTests is Test {
         vm.prank(creator1);
         usdt.approve(address(subscription), 100 ether);
 
-        vm.expectRevert("Cannot subscribe to yourself");
+        vm.expectRevert(Subscription.Subscription__CannotSubscribeToSelf.selector);
         vm.prank(creator1);
         subscription.subscribe(creator1);
     }
@@ -119,7 +119,7 @@ contract SubscriptionTests is Test {
         vm.prank(subscriber1);
         usdt.approve(address(subscription), 100 ether);
 
-        vm.expectRevert("Creator not registered");
+        vm.expectRevert(Subscription.Subscription__CreatorNotRegistered.selector);
         vm.prank(subscriber1);
         subscription.subscribe(address(10));
     }
@@ -141,12 +141,15 @@ contract SubscriptionTests is Test {
 
     // Withdrawal Tests
 
-    function testRequestImmediateWithdrawal() public {
+    function testRequestImmediateWithdrawalAfter30Days() public {
         // Subscribe
         vm.startPrank(subscriber1);
         usdt.approve(address(subscription), 100 ether);
         uint256 subscriptionId = subscription.subscribe(creator1);
         vm.stopPrank();
+
+        // Fast forward 30 days
+        vm.warp(block.timestamp + 30 days);
 
         // Request immediate withdrawal
         vm.prank(subscriber1);
@@ -167,6 +170,9 @@ contract SubscriptionTests is Test {
         usdt.approve(address(subscription), 100 ether);
         uint256 subscriptionId = subscription.subscribe(creator1);
         vm.stopPrank();
+
+        // Fast forward 30 days
+        vm.warp(block.timestamp + 30 days);
 
         // Request complete epoch withdrawal
         vm.prank(subscriber1);
@@ -189,11 +195,14 @@ contract SubscriptionTests is Test {
         uint256 subscriptionId = subscription.subscribe(creator1);
         vm.stopPrank();
 
+        // Fast forward 30 days
+        vm.warp(block.timestamp + 30 days);
+
         // Request complete epoch withdrawal
         vm.prank(subscriber1);
         subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.COMPLETE_EPOCH);
 
-        // Fast forward 30 days
+        // Fast forward another 30 days
         vm.warp(block.timestamp + 30 days);
 
         // Process withdrawal
@@ -205,6 +214,24 @@ contract SubscriptionTests is Test {
         assertEq(uint256(sub.status), uint256(Subscription.SubscriptionStatus.WITHDRAWAL_PROCESSED));
     }
 
+    function testWithdrawalBefore30DaysReverts() public {
+        // Subscribe
+        vm.startPrank(subscriber1);
+        usdt.approve(address(subscription), 100 ether);
+        uint256 subscriptionId = subscription.subscribe(creator1);
+        vm.stopPrank();
+
+        // Try immediate withdrawal before 30 days
+        vm.prank(subscriber1);
+        vm.expectRevert(Subscription.Subscription__WithdrawalRequestTimeNotMet.selector);
+        subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.IMMEDIATE);
+
+        // Try complete epoch withdrawal before 30 days
+        vm.prank(subscriber1);
+        vm.expectRevert(Subscription.Subscription__WithdrawalRequestTimeNotMet.selector);
+        subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.COMPLETE_EPOCH);
+    }
+
     function testProcessCompleteEpochWithdrawalBefore30DaysReverts() public {
         // Subscribe
         vm.startPrank(subscriber1);
@@ -212,12 +239,15 @@ contract SubscriptionTests is Test {
         uint256 subscriptionId = subscription.subscribe(creator1);
         vm.stopPrank();
 
+        // Fast forward 30 days
+        vm.warp(block.timestamp + 30 days);
+
         // Request complete epoch withdrawal
         vm.prank(subscriber1);
         subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.COMPLETE_EPOCH);
 
-        // Try to process before 30 days
-        vm.expectRevert("1-month delay not met");
+        // Try to process before 60 days total (30 days from request)
+        vm.expectRevert(Subscription.Subscription__WithdrawalRequestTimeNotMet.selector);
         vm.prank(subscriber1);
         subscription.processCompleteEpochWithdrawal(subscriptionId);
     }
@@ -230,7 +260,7 @@ contract SubscriptionTests is Test {
         vm.stopPrank();
 
         // Subscriber 2 tries to request withdrawal
-        vm.expectRevert("Not subscription owner");
+        vm.expectRevert(Subscription.Subscription__NotSubscriptionOwner.selector);
         vm.prank(subscriber2);
         subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.IMMEDIATE);
     }
@@ -242,12 +272,15 @@ contract SubscriptionTests is Test {
         uint256 subscriptionId = subscription.subscribe(creator1);
         vm.stopPrank();
 
+        // Fast forward 30 days
+        vm.warp(block.timestamp + 30 days);
+
         // Request withdrawal
         vm.prank(subscriber1);
         subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.IMMEDIATE);
 
         // Try to request again
-        vm.expectRevert("Subscription not active");
+        vm.expectRevert(Subscription.Subscription__SubscriptionNotActive.selector);
         vm.prank(subscriber1);
         subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.COMPLETE_EPOCH);
     }
@@ -268,5 +301,98 @@ contract SubscriptionTests is Test {
 
     function testImmediateWithdrawalPenalty() public {
         assertEq(subscription.IMMEDIATE_WITHDRAWAL_PENALTY(), 1 ether);
+    }
+
+    // APY Tests
+
+    function testDefaultAPY() public {
+        // Default APY should be 3.6% (360 bps)
+        assertEq(subscription.apyBps(), 360);
+    }
+
+    function testOwnerCanUpdateAPY() public {
+        uint256 newAPY = 500; // 5%
+        vm.prank(address(1)); // Owner address
+        subscription.setAPY(newAPY);
+        assertEq(subscription.apyBps(), newAPY);
+    }
+
+    function testNonOwnerCannotUpdateAPY() public {
+        vm.prank(subscriber1);
+        vm.expectRevert();
+        subscription.setAPY(500);
+    }
+
+    function testCannotSetInvalidAPY() public {
+        vm.prank(address(1));
+        vm.expectRevert(Subscription.Subscription__InvalidAmount.selector);
+        subscription.setAPY(0);
+
+        vm.prank(address(1));
+        vm.expectRevert(Subscription.Subscription__InvalidAmount.selector);
+        subscription.setAPY(10001);
+    }
+
+    // Yield Distribution Tests
+
+    function testYieldDistributionToCreator() public {
+        // Subscribe
+        vm.startPrank(subscriber1);
+        usdt.approve(address(subscription), 100 ether);
+        uint256 subscriptionId = subscription.subscribe(creator1);
+        vm.stopPrank();
+
+        // Fast forward 1 year (365 days)
+        vm.warp(block.timestamp + 365 days);
+
+        // Request complete epoch withdrawal
+        vm.prank(subscriber1);
+        subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.COMPLETE_EPOCH);
+
+        // Fast forward another 30 days
+        vm.warp(block.timestamp + 30 days);
+
+        // Get creator earnings before withdrawal
+        (, , uint256 earningsBefore, ) = registry.getCreator(creator1);
+
+        // Process withdrawal
+        vm.prank(subscriber1);
+        subscription.processCompleteEpochWithdrawal(subscriptionId);
+
+        // Check creator earned yield (3.6% of 100 USDT = 3.6 USDT + 30 days)
+        (, , uint256 earningsAfter, ) = registry.getCreator(creator1);
+        assertTrue(earningsAfter > earningsBefore);
+        // Should be approximately 3.6 USDT in yield (allowing for some rounding and extra 30 days)
+        assertGe(earningsAfter, 3.5 ether);
+        assertLt(earningsAfter, 4.2 ether);
+    }
+
+    function testSubscriberGetsPrincipalBack() public {
+        // Subscribe
+        vm.startPrank(subscriber1);
+        usdt.approve(address(subscription), 100 ether);
+        uint256 subscriptionId = subscription.subscribe(creator1);
+        vm.stopPrank();
+
+        // Get subscriber balance before (after subscribing, so 100 less)
+        uint256 balanceBefore = usdt.balanceOf(subscriber1);
+
+        // Fast forward 1 year
+        vm.warp(block.timestamp + 365 days);
+
+        // Request and process complete epoch withdrawal
+        vm.prank(subscriber1);
+        subscription.requestWithdrawal(subscriptionId, Subscription.WithdrawalType.COMPLETE_EPOCH);
+
+        vm.warp(block.timestamp + 30 days);
+
+        vm.prank(subscriber1);
+        subscription.processCompleteEpochWithdrawal(subscriptionId);
+
+        // Get subscriber balance after
+        uint256 balanceAfter = usdt.balanceOf(subscriber1);
+
+        // Subscriber should get back 100 USDT (original principal)
+        assertEq(balanceAfter, balanceBefore + 100 ether);
     }
 }

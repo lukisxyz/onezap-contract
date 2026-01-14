@@ -14,6 +14,19 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 contract Subscription is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
 
+    // Custom errors
+    error Subscription__InvalidCreatorAddress();
+    error Subscription__CannotSubscribeToSelf();
+    error Subscription__CreatorNotRegistered();
+    error Subscription__InvalidWithdrawalType();
+    error Subscription__InvalidSubscriptionId();
+    error Subscription__NotSubscriptionOwner();
+    error Subscription__SubscriptionNotActive();
+    error Subscription__WithdrawalAlreadyRequested();
+    error Subscription__WithdrawalRequestTimeNotMet();
+    error Subscription__InsufficientAllowance();
+    error Subscription__InvalidAmount();
+
     // Immutable token references
     IERC20 public immutable USDT_TOKEN;
     IERC20 public immutable USDY_TOKEN;
@@ -26,6 +39,12 @@ contract Subscription is ReentrancyGuard, Ownable {
 
     // Penalty amounts
     uint256 public constant IMMEDIATE_WITHDRAWAL_PENALTY = 1 ether; // 1 USDT
+
+    // APY configuration (in basis points, 360 bps = 3.6%)
+    uint256 public apyBps = 360;
+
+    // Lock period in seconds (30 days)
+    uint256 public constant LOCK_PERIOD = 30 days;
 
     // Withdrawal types
     enum WithdrawalType {
@@ -101,13 +120,22 @@ contract Subscription is ReentrancyGuard, Ownable {
         address _usdyToken,
         address _registry
     ) Ownable(address(1)) {
-        require(_usdtToken != address(0), "Invalid USDT token address");
-        require(_usdyToken != address(0), "Invalid USDY token address");
-        require(_registry != address(0), "Invalid registry address");
+        if (_usdtToken == address(0)) revert Subscription__InvalidCreatorAddress();
+        if (_usdyToken == address(0)) revert Subscription__InvalidCreatorAddress();
+        if (_registry == address(0)) revert Subscription__InvalidCreatorAddress();
 
         USDT_TOKEN = IERC20(_usdtToken);
         USDY_TOKEN = IERC20(_usdyToken);
         REGISTRY = _registry;
+    }
+
+    /**
+     * @dev Updates the APY (owner only)
+     * @param _newAPY New APY in basis points (e.g., 360 = 3.6%)
+     */
+    function setAPY(uint256 _newAPY) external onlyOwner {
+        if (_newAPY == 0 || _newAPY > 10000) revert Subscription__InvalidAmount();
+        apyBps = _newAPY;
     }
 
     /**
@@ -116,13 +144,13 @@ contract Subscription is ReentrancyGuard, Ownable {
      * @return subscriptionId The ID of the new subscription
      */
     function subscribe(address creator) external nonReentrant returns (uint256 subscriptionId) {
-        require(creator != address(0), "Invalid creator address");
-        require(creator != msg.sender, "Cannot subscribe to yourself");
+        if (creator == address(0)) revert Subscription__InvalidCreatorAddress();
+        if (creator == msg.sender) revert Subscription__CannotSubscribeToSelf();
 
         // Check if creator is registered
         (string memory username, , , bool exists) = IContentCreatorRegistry(REGISTRY)
             .getCreator(creator);
-        require(exists, "Creator not registered");
+        if (!exists) revert Subscription__CreatorNotRegistered();
 
         // Transfer USDT from subscriber to contract (locked)
         USDT_TOKEN.safeTransferFrom(msg.sender, address(this), SUBSCRIPTION_AMOUNT);
@@ -158,12 +186,11 @@ contract Subscription is ReentrancyGuard, Ownable {
         nonReentrant
     {
         SubscriptionData storage sub = subscriptions[subscriptionId];
-        require(sub.subscriber == msg.sender, "Not subscription owner");
-        require(sub.status == SubscriptionStatus.ACTIVE, "Subscription not active");
-        require(
-            sub.withdrawalRequestTime == 0,
-            "Withdrawal already requested"
-        );
+        if (sub.subscriber == address(0)) revert Subscription__InvalidSubscriptionId();
+        if (sub.subscriber != msg.sender) revert Subscription__NotSubscriptionOwner();
+        if (sub.status != SubscriptionStatus.ACTIVE) revert Subscription__SubscriptionNotActive();
+        if (sub.withdrawalRequestTime != 0) revert Subscription__WithdrawalAlreadyRequested();
+        if (block.timestamp < sub.startTime + 30 days) revert Subscription__WithdrawalRequestTimeNotMet();
 
         uint256 penalty = 0;
         if (withdrawalType == WithdrawalType.IMMEDIATE) {
@@ -196,13 +223,11 @@ contract Subscription is ReentrancyGuard, Ownable {
      */
     function processCompleteEpochWithdrawal(uint256 subscriptionId) external nonReentrant {
         SubscriptionData storage sub = subscriptions[subscriptionId];
-        require(sub.subscriber == msg.sender, "Not subscription owner");
-        require(sub.status == SubscriptionStatus.WITHDRAWAL_REQUESTED, "Invalid status");
-        require(sub.withdrawalType == WithdrawalType.COMPLETE_EPOCH, "Not complete epoch");
-        require(
-            block.timestamp >= sub.withdrawalRequestTime + 30 days,
-            "1-month delay not met"
-        );
+        if (sub.subscriber == address(0)) revert Subscription__InvalidSubscriptionId();
+        if (sub.subscriber != msg.sender) revert Subscription__NotSubscriptionOwner();
+        if (sub.status != SubscriptionStatus.WITHDRAWAL_REQUESTED) revert Subscription__SubscriptionNotActive();
+        if (sub.withdrawalType != WithdrawalType.COMPLETE_EPOCH) revert Subscription__InvalidWithdrawalType();
+        if (block.timestamp < sub.withdrawalRequestTime + 30 days) revert Subscription__WithdrawalRequestTimeNotMet();
 
         _processWithdrawal(subscriptionId);
     }
@@ -217,12 +242,18 @@ contract Subscription is ReentrancyGuard, Ownable {
         // Calculate current USDY value with yield
         uint256 currentValue = calculateCurrentValue(subscriptionId);
 
-        // Calculate return amount (subtract penalty if any)
-        uint256 returnAmount = currentValue;
+        // Calculate return amount and yield distribution
+        uint256 returnAmount = sub.amount; // Subscriber gets principal back
+        uint256 yieldAmount = 0;
 
-        // For complete epoch, return full amount with yield
+        // For complete epoch, distribute yield to creator
         if (sub.withdrawalType == WithdrawalType.COMPLETE_EPOCH) {
-            // Full amount with yield - already calculated in currentValue
+            // Yield is the difference between current value and original amount
+            if (currentValue > sub.amount) {
+                yieldAmount = currentValue - sub.amount;
+                // Distribute yield to creator
+                IContentCreatorRegistry(REGISTRY).addEarnings(sub.creator, yieldAmount);
+            }
         } else if (sub.withdrawalType == WithdrawalType.IMMEDIATE) {
             // Return 99 USDT (1 USDT penalty)
             returnAmount = sub.amount - IMMEDIATE_WITHDRAWAL_PENALTY;
@@ -251,7 +282,6 @@ contract Subscription is ReentrancyGuard, Ownable {
 
         // Yield calculation: principal * rate * time
         // currentValue = (principal * APY * time) / (10000 * seconds_per_year) + principal
-        uint256 apyBps = 500; // 5% APY
         uint256 secondsPerYear = 365 days;
 
         uint256 yieldAmount = (sub.usdyAmount * apyBps * timeElapsed) / (10000 * secondsPerYear);

@@ -9,6 +9,13 @@ import "@openzeppelin/contracts/access/Ownable.sol";
  * @dev Allows self-registration with wallet + username, fully updatable
  */
 contract ContentCreatorRegistry is Ownable {
+    // Custom errors
+    error ContentCreatorRegistry__CreatorAlreadyRegistered();
+    error ContentCreatorRegistry__UsernameCannotBeEmpty();
+    error ContentCreatorRegistry__InvalidWalletAddress();
+    error ContentCreatorRegistry__CreatorNotRegistered();
+    error ContentCreatorRegistry__InvalidAmount();
+
     // Struct to store creator information
     struct Creator {
         string username;
@@ -41,9 +48,9 @@ contract ContentCreatorRegistry is Ownable {
      * @param wallet Creator's wallet address
      */
     function registerCreator(string calldata username, address wallet) external {
-        require(!creators[msg.sender].exists, "Creator already registered");
-        require(bytes(username).length > 0, "Username cannot be empty");
-        require(wallet != address(0), "Invalid wallet address");
+        if (creators[msg.sender].exists) revert ContentCreatorRegistry__CreatorAlreadyRegistered();
+        if (bytes(username).length == 0) revert ContentCreatorRegistry__UsernameCannotBeEmpty();
+        if (wallet == address(0)) revert ContentCreatorRegistry__InvalidWalletAddress();
 
         creators[msg.sender] = Creator({
             username: username,
@@ -63,9 +70,9 @@ contract ContentCreatorRegistry is Ownable {
      * @param newWallet New wallet address
      */
     function updateCreator(string calldata newUsername, address newWallet) external {
-        require(creators[msg.sender].exists, "Creator not registered");
-        require(bytes(newUsername).length > 0, "Username cannot be empty");
-        require(newWallet != address(0), "Invalid wallet address");
+        if (!creators[msg.sender].exists) revert ContentCreatorRegistry__CreatorNotRegistered();
+        if (bytes(newUsername).length == 0) revert ContentCreatorRegistry__UsernameCannotBeEmpty();
+        if (newWallet == address(0)) revert ContentCreatorRegistry__InvalidWalletAddress();
 
         creators[msg.sender].username = newUsername;
         creators[msg.sender].wallet = newWallet;
@@ -78,8 +85,8 @@ contract ContentCreatorRegistry is Ownable {
      * @param newWallet New wallet address
      */
     function updateWallet(address newWallet) external {
-        require(creators[msg.sender].exists, "Creator not registered");
-        require(newWallet != address(0), "Invalid wallet address");
+        if (!creators[msg.sender].exists) revert ContentCreatorRegistry__CreatorNotRegistered();
+        if (newWallet == address(0)) revert ContentCreatorRegistry__InvalidWalletAddress();
 
         creators[msg.sender].wallet = newWallet;
 
@@ -91,8 +98,8 @@ contract ContentCreatorRegistry is Ownable {
      * @param newUsername New username
      */
     function updateUsername(string calldata newUsername) external {
-        require(creators[msg.sender].exists, "Creator not registered");
-        require(bytes(newUsername).length > 0, "Username cannot be empty");
+        if (!creators[msg.sender].exists) revert ContentCreatorRegistry__CreatorNotRegistered();
+        if (bytes(newUsername).length == 0) revert ContentCreatorRegistry__UsernameCannotBeEmpty();
 
         creators[msg.sender].username = newUsername;
 
@@ -105,8 +112,8 @@ contract ContentCreatorRegistry is Ownable {
      * @param amount Amount of earnings to add
      */
     function addEarnings(address creator, uint256 amount) external onlyOwner {
-        require(creators[creator].exists, "Creator not registered");
-        require(amount > 0, "Amount must be greater than 0");
+        if (!creators[creator].exists) revert ContentCreatorRegistry__CreatorNotRegistered();
+        if (amount == 0) revert ContentCreatorRegistry__InvalidAmount();
 
         creators[creator].totalEarnings += amount;
 

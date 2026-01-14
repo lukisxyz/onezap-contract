@@ -129,19 +129,19 @@ contract RegistryTests is Test {
         vm.prank(creator1);
         registry.registerCreator("creator1", creator1);
 
-        vm.expectRevert("Creator already registered");
+        vm.expectRevert(ContentCreatorRegistry.ContentCreatorRegistry__CreatorAlreadyRegistered.selector);
         vm.prank(creator1);
         registry.registerCreator("creator2", creator1);
     }
 
     function testRevertRegisterEmptyUsername() public {
-        vm.expectRevert("Username cannot be empty");
+        vm.expectRevert(ContentCreatorRegistry.ContentCreatorRegistry__UsernameCannotBeEmpty.selector);
         vm.prank(creator1);
         registry.registerCreator("", creator1);
     }
 
     function testRevertRegisterInvalidWallet() public {
-        vm.expectRevert("Invalid wallet address");
+        vm.expectRevert(ContentCreatorRegistry.ContentCreatorRegistry__InvalidWalletAddress.selector);
         vm.prank(creator1);
         registry.registerCreator("creator1", address(0));
     }
@@ -150,7 +150,7 @@ contract RegistryTests is Test {
         vm.prank(creator1);
         registry.registerCreator("creator1", creator1);
 
-        vm.expectRevert("Invalid wallet address");
+        vm.expectRevert(ContentCreatorRegistry.ContentCreatorRegistry__InvalidWalletAddress.selector);
         vm.prank(creator1);
         registry.updateWallet(address(0));
     }
@@ -159,19 +159,19 @@ contract RegistryTests is Test {
         vm.prank(creator1);
         registry.registerCreator("creator1", creator1);
 
-        vm.expectRevert("Username cannot be empty");
+        vm.expectRevert(ContentCreatorRegistry.ContentCreatorRegistry__UsernameCannotBeEmpty.selector);
         vm.prank(creator1);
         registry.updateUsername("");
     }
 
     function testRevertUpdateUnregisteredCreator() public {
-        vm.expectRevert("Creator not registered");
+        vm.expectRevert(ContentCreatorRegistry.ContentCreatorRegistry__CreatorNotRegistered.selector);
         vm.prank(creator1);
         registry.updateWallet(address(5));
     }
 
     function testRevertAddEarningsUnregisteredCreator() public {
-        vm.expectRevert("Creator not registered");
+        vm.expectRevert(ContentCreatorRegistry.ContentCreatorRegistry__CreatorNotRegistered.selector);
         vm.prank(owner);
         registry.addEarnings(creator1, 100 ether);
     }
@@ -180,7 +180,7 @@ contract RegistryTests is Test {
         vm.prank(creator1);
         registry.registerCreator("creator1", creator1);
 
-        vm.expectRevert("Amount must be greater than 0");
+        vm.expectRevert(ContentCreatorRegistry.ContentCreatorRegistry__InvalidAmount.selector);
         vm.prank(owner);
         registry.addEarnings(creator1, 0);
     }
