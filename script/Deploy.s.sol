@@ -43,9 +43,15 @@ contract Deploy is Script {
         );
         console.log("Subscription deployed at:", address(subscription));
 
+        vm.stopBroadcast();
+
         // Transfer ownership of tokens to subscription contract for swaps
+        // We need to impersonate address(1) since that's who owns the tokens
         console.log("Transferring token ownerships...");
+        vm.broadcast(address(1));
         usdt.transferOwnership(address(subscription));
+
+        vm.broadcast(address(1));
         usdy.transferOwnership(address(subscription));
 
         console.log("\n=== Deployment Summary ===");
@@ -60,8 +66,6 @@ contract Deploy is Script {
         console.log("USDY_TOKEN=<address>", address(usdy));
         console.log("REGISTRY=<address>", address(registry));
         console.log("SUBSCRIPTION=<address>", address(subscription));
-
-        vm.stopBroadcast();
     }
 }
 

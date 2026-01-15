@@ -16,6 +16,13 @@ contract MockUSDT is ERC20, Ownable {
     constructor() ERC20("Mock USDT", "USDT") Ownable(address(1)) {}
 
     /**
+     * @dev Returns the number of decimals used to get its user representation
+     */
+    function decimals() public view virtual override returns (uint8) {
+        return 6;
+    }
+
+    /**
      * @dev Mints new tokens to the specified address
      * @param to Address to mint tokens to
      * @param amount Amount of tokens to mint

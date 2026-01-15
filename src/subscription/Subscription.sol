@@ -7,6 +7,17 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
+ * @title IMockUSDY
+ * @dev Interface for MockUSDY token with yield mechanics
+ */
+interface IMockUSDY is IERC20 {
+    function mint(address to, uint256 amount) external;
+    function burn(uint256 amount) external;
+    function accrueYield() external;
+    function getApy() external view returns (uint256);
+}
+
+/**
  * @title Subscription
  * @notice Main subscription contract handling subscriptions, withdrawals, and penalties
  * @dev Fixed subscription: 100 USDT per content creator, USDY yield accrual, multiple withdrawal options
@@ -26,6 +37,7 @@ contract Subscription is ReentrancyGuard, Ownable {
     error Subscription__WithdrawalRequestTimeNotMet();
     error Subscription__InsufficientAllowance();
     error Subscription__InvalidAmount();
+    error Subscription__MintFailed();
 
     // Immutable token references
     IERC20 public immutable USDT_TOKEN;
@@ -34,14 +46,28 @@ contract Subscription is ReentrancyGuard, Ownable {
     // Registry contract reference
     address public immutable REGISTRY;
 
-    // Subscription amount (100 USDT)
-    uint256 public constant SUBSCRIPTION_AMOUNT = 100 ether;
+    // Subscription amount (100 USDT with 6 decimals)
+    uint256 public constant SUBSCRIPTION_AMOUNT = 100 * 10**6; // 100 USDT (6 decimals)
 
-    // Penalty amounts
-    uint256 public constant IMMEDIATE_WITHDRAWAL_PENALTY = 1 ether; // 1 USDT
+    // Penalty amounts (1 USDT with 6 decimals)
+    uint256 public constant IMMEDIATE_WITHDRAWAL_PENALTY = 1 * 10**6; // 1 USDT (6 decimals)
 
-    // APY configuration (in basis points, 360 bps = 3.6%)
-    uint256 public apyBps = 360;
+    // Decimal conversion factor: USDY (18 decimals) / USDT (6 decimals)
+    uint256 public constant USDY_DECIMALS = 18;
+    uint256 public constant USDT_DECIMALS = 6;
+    uint256 public constant DECIMAL_CONVERSION_FACTOR = 10**(USDY_DECIMALS - USDT_DECIMALS); // 10^12
+
+    /**
+     * @dev Returns the APY from USDY token
+     * @return apy APY in basis points (e.g., 500 = 5%)
+     */
+    function getApy() external view returns (uint256 apy) {
+        try IMockUSDY(address(USDY_TOKEN)).getApy() returns (uint256 _apy) {
+            return _apy;
+        } catch {
+            return 0;
+        }
+    }
 
     // Lock period in seconds (30 days)
     uint256 public constant LOCK_PERIOD = 30 days;
@@ -130,15 +156,6 @@ contract Subscription is ReentrancyGuard, Ownable {
     }
 
     /**
-     * @dev Updates the APY (owner only)
-     * @param _newAPY New APY in basis points (e.g., 360 = 3.6%)
-     */
-    function setAPY(uint256 _newAPY) external onlyOwner {
-        if (_newAPY == 0 || _newAPY > 10000) revert Subscription__InvalidAmount();
-        apyBps = _newAPY;
-    }
-
-    /**
      * @dev Subscribes to a content creator
      * @param creator Content creator's address
      * @return subscriptionId The ID of the new subscription
@@ -148,21 +165,28 @@ contract Subscription is ReentrancyGuard, Ownable {
         if (creator == msg.sender) revert Subscription__CannotSubscribeToSelf();
 
         // Check if creator is registered
-        (string memory username, , , bool exists) = IContentCreatorRegistry(REGISTRY)
+        (, , , bool exists) = IContentCreatorRegistry(REGISTRY)
             .getCreator(creator);
         if (!exists) revert Subscription__CreatorNotRegistered();
 
         // Transfer USDT from subscriber to contract (locked)
         USDT_TOKEN.safeTransferFrom(msg.sender, address(this), SUBSCRIPTION_AMOUNT);
 
-        // Create subscription (USDY is tracked internally, not transferred to subscriber)
+        // Mint USDY tokens (1:1 swap, converted to 18 decimals)
+        uint256 usdyToMint = SUBSCRIPTION_AMOUNT * DECIMAL_CONVERSION_FACTOR;
+        try IMockUSDY(address(USDY_TOKEN)).mint(address(this), usdyToMint) {} catch {
+            // If mint fails, revert
+            revert Subscription__MintFailed();
+        }
+
+        // Create subscription (stores base USDY amount)
         subscriptionId = nextSubscriptionId++;
         subscriptions[subscriptionId] = SubscriptionData({
             id: subscriptionId,
             subscriber: msg.sender,
             creator: creator,
             amount: SUBSCRIPTION_AMOUNT,
-            usdyAmount: SUBSCRIPTION_AMOUNT, // 1:1 with USDT initially
+            usdyAmount: usdyToMint, // Base USDY amount (will grow via accrueYield)
             startTime: block.timestamp,
             lastYieldAccrual: block.timestamp,
             status: SubscriptionStatus.ACTIVE,
@@ -239,24 +263,34 @@ contract Subscription is ReentrancyGuard, Ownable {
     function _processWithdrawal(uint256 subscriptionId) internal {
         SubscriptionData storage sub = subscriptions[subscriptionId];
 
-        // Calculate current USDY value with yield
-        uint256 currentValue = calculateCurrentValue(subscriptionId);
+        // Get current USDY balance from USDY contract (includes ALL yield!)
+        uint256 currentUsdyBalance = USDY_TOKEN.balanceOf(address(this));
 
         // Calculate return amount and yield distribution
-        uint256 returnAmount = sub.amount; // Subscriber gets principal back
+        uint256 returnAmount = sub.amount; // Subscriber gets principal back (6 decimals)
         uint256 yieldAmount = 0;
 
         // For complete epoch, distribute yield to creator
         if (sub.withdrawalType == WithdrawalType.COMPLETE_EPOCH) {
-            // Yield is the difference between current value and original amount
-            if (currentValue > sub.amount) {
-                yieldAmount = currentValue - sub.amount;
-                // Distribute yield to creator
-                IContentCreatorRegistry(REGISTRY).addEarnings(sub.creator, yieldAmount);
+            // USDY contract already calculated the yield
+            // We just need to distribute it
+            if (currentUsdyBalance > sub.usdyAmount) {
+                // Yield is the extra value from USDY growth
+                yieldAmount = currentUsdyBalance - sub.usdyAmount;
+
+                // Convert yield to USDT (6 decimals) and distribute to creator
+                uint256 yieldInUsdt = yieldAmount / DECIMAL_CONVERSION_FACTOR;
+                IContentCreatorRegistry(REGISTRY).addEarnings(sub.creator, yieldInUsdt);
             }
+
+            // Burn the original USDY amount
+            IMockUSDY(address(USDY_TOKEN)).burn(sub.usdyAmount);
+
         } else if (sub.withdrawalType == WithdrawalType.IMMEDIATE) {
             // Return 99 USDT (1 USDT penalty)
             returnAmount = sub.amount - IMMEDIATE_WITHDRAWAL_PENALTY;
+            // Burn the base USDY
+            IMockUSDY(address(USDY_TOKEN)).burn(sub.usdyAmount);
         }
 
         // Transfer USDT back to subscriber from contract balance
@@ -267,26 +301,6 @@ contract Subscription is ReentrancyGuard, Ownable {
         emit WithdrawalProcessed(subscriptionId, msg.sender, returnAmount);
     }
 
-    /**
-     * @dev Calculates the current value of a subscription including yield
-     * @param subscriptionId Subscription ID
-     * @return currentValue Current value in USDT
-     */
-    function calculateCurrentValue(uint256 subscriptionId) internal view returns (uint256 currentValue) {
-        SubscriptionData storage sub = subscriptions[subscriptionId];
-        uint256 timeElapsed = block.timestamp - sub.lastYieldAccrual;
-
-        if (timeElapsed == 0) {
-            return sub.usdyAmount;
-        }
-
-        // Yield calculation: principal * rate * time
-        // currentValue = (principal * APY * time) / (10000 * seconds_per_year) + principal
-        uint256 secondsPerYear = 365 days;
-
-        uint256 yieldAmount = (sub.usdyAmount * apyBps * timeElapsed) / (10000 * secondsPerYear);
-        currentValue = sub.usdyAmount + yieldAmount;
-    }
 
     /**
      * @dev Returns subscription information

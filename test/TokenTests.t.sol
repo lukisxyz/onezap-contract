@@ -214,8 +214,8 @@ contract TokenTests is Test {
         assertEq(yield, expectedYield);
     }
 
-    function testAPY() public {
-        uint256 rate = usdy.getAPY();
+    function testAPY() external view {
+        uint256 rate = usdy.getApy();
         assertEq(rate, 500); // 5%
     }
 

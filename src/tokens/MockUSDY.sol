@@ -124,7 +124,7 @@ contract MockUSDY is ERC20, Ownable {
      * @dev Returns the APY in basis points
      * @return rate APY rate (500 = 5%)
      */
-    function getAPY() external pure returns (uint256 rate) {
+    function getApy() external pure returns (uint256 rate) {
         return APY_BPS;
     }
 
